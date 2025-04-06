@@ -225,3 +225,25 @@ void clearDisplays() { //Clear the display
     lc_bottom.clearDisplay(moduleIndex);
   }
 }
+
+void setPixel(int y, int x, bool state) {
+  if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
+
+  if (y < 8) {  // Top display
+    int chip = x / 8;
+    lc_top.setLed(chip, y, 7 - (x % 8), state);
+  } else {      // Bottom display
+    int chip = x / 8;
+    lc_bottom.setLed(chip, y - 8, 7 - (x % 8), state);
+  }
+}
+
+void lightUpAllLEDs() {
+  // Turn on all LEDs on both displays
+  for (int i = 0; i < 4; i++) {
+    for (int row = 0; row < 8; row++) {
+      lc_top.setRow(i, row, 0xFF);
+      lc_bottom.setRow(i, row, 0xFF);
+    }
+  }
+}
