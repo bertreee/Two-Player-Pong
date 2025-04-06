@@ -1,0 +1,227 @@
+// PROJECT  :Two Player Pong
+// PURPOSE  :make a two-player pong game to be played on LED matrixes and played with potentiometers
+// COURSE   :ICS3U-E
+// AUTHOR   :B. MI
+// DATE     :2025 04 05
+// MCU      :328P (Standalone)
+// STATUS   :Working
+// REFERENCE:https://github.com/wayoda/LedControl
+
+
+#include <LedControl.h>
+
+// Pin configuration for the LED displays
+const int DIN_PIN = 11;      // Data input pin for SPI
+const int CLK_PIN = 13;      // Clock pin for SPI
+const int CS_TOP = 9;        // Chip select for the top display
+const int CS_BOTTOM = 10;    // Chip select for the bottom display
+
+// Create LedControl objects for both top and bottom displays (4 modules each)
+LedControl lc_top(DIN_PIN, CLK_PIN, CS_TOP, 4);    // Top display
+LedControl lc_bottom(DIN_PIN, CLK_PIN, CS_BOTTOM, 4); // Bottom display
+
+// Game constants
+const int SCREEN_WIDTH = 32;   // Screen width (in columns)
+const int SCREEN_HEIGHT = 16;  // Screen height (in rows)
+const int PADDLE_HEIGHT = 4;  // Height of paddles
+const int BALL_DELAY = 50;     // Delay between ball movement
+const int SCORE_DISPLAY_TIME = 800;  // Time to display scores after a point
+const int WINNING_SCORE = 9;  // Score needed to win the game
+
+// Game variables
+int paddleLeft = 6;   // Left paddle vertical position
+int paddleRight = 6;  // Right paddle vertical position
+int ballX = 16;       // Ball's X coordinate (horizontal position)
+int ballY = 8;        // Ball's Y coordinate (vertical position)
+int ballDirX = 1;     // Ball's X direction (1 for right, -1 for left)
+int ballDirY = 1;     // Ball's Y direction (1 for down, -1 for up)
+int scoreLeft = 0;    // Left player score
+int scoreRight = 0;   // Right player score
+bool gameOver = false; // Flag to indicate if the game is over
+
+// Input pins for the paddles and reset button
+const int POT_LEFT = A1;      // Potentiometer for the left paddle
+const int POT_RIGHT = A0;     // Potentiometer for the right paddle
+const int RESET_BUTTON = 2;   // Button to reset the game
+
+// Font data for displaying numbers on the LED matrix
+const byte font[10][5] PROGMEM = {
+  { 0x7C, 0x8A, 0x92, 0xA2, 0x7C },  // 0
+  { 0x00, 0x42, 0xFE, 0x02, 0x00 },  // 1
+  { 0x46, 0x8A, 0x92, 0xA2, 0x42 },  // 2
+  { 0x44, 0x82, 0x92, 0x92, 0x6C },  // 3
+  { 0x30, 0x50, 0x90, 0xFE, 0x10 },  // 4
+  { 0xE4, 0xA2, 0xA2, 0xA2, 0x9C },  // 5
+  { 0x3C, 0x52, 0x92, 0x92, 0x0C },  // 6
+  { 0x80, 0x8E, 0x90, 0xA0, 0xC0 },  // 7
+  { 0x6C, 0x92, 0x92, 0x92, 0x6C },  // 8
+  { 0x60, 0x92, 0x92, 0x94, 0x78 }   // 9
+};
+
+void setup() {
+  // Initialize the LED displays
+  for (int moduleIndex = 0; moduleIndex < 4; moduleIndex = moduleIndex + 1) {
+    lc_top.shutdown(moduleIndex, false);  // Wake up the display
+    lc_top.setIntensity(moduleIndex, 5);   // Set brightness to medium (5 out of 15)
+    lc_top.clearDisplay(moduleIndex);      // Clear the display
+
+    lc_bottom.shutdown(moduleIndex, false);
+    lc_bottom.setIntensity(moduleIndex, 5);
+    lc_bottom.clearDisplay(moduleIndex);
+  }
+
+  pinMode(RESET_BUTTON, INPUT_PULLUP); // Set reset button as input with pull-up resistor
+  randomSeed(analogRead(A2));  // Initialize random seed based on analog input
+}
+
+void loop() {
+  handleReset(); // Check if the reset button is pressed and reset the game if true
+
+  if (gameOver) {
+    lightUpAllLEDs(); // Light up all LEDs when the game is over
+    return; // Exit the loop, preventing further game updates
+  }
+
+  updatePaddles();   // Update paddle positions based on potentiometer readings
+  updateBall();      // Update the ball's position
+  checkCollisions(); // Check if the ball collides with walls or paddles
+  drawGame();        // Draw the paddles, ball, and score on the LED displays
+}
+
+void handleReset() {
+  // If the reset button is pressed, reset all game variables
+  if (digitalRead(RESET_BUTTON) == LOW) {
+    paddleLeft = 6;
+    paddleRight = 6;
+    ballX = 16;
+    ballY = 8;
+    ballDirX = 1;
+    ballDirY = 1;
+    scoreLeft = 0;
+    scoreRight = 0;
+    gameOver = false;
+
+    clearDisplays();  // Clear the displays after resetting
+    delay(500);       // Wait for 500 milliseconds before continuing
+  }
+}
+
+void updatePaddles() {
+  // Read analog values from the potentiometers and map them to paddle positions
+  paddleLeft = map(analogRead(POT_LEFT), 0, 1023, 0, SCREEN_HEIGHT - PADDLE_HEIGHT);
+  paddleRight = map(analogRead(POT_RIGHT), 0, 1023, 0, SCREEN_HEIGHT - PADDLE_HEIGHT);
+}
+
+void updateBall() {
+  // Move the ball in its current direction
+  ballX = ballX + ballDirX;
+  ballY = ballY + ballDirY;
+}
+
+void checkCollisions() {
+  // Check for collisions with the top and bottom walls
+  if (ballY <= 0 || ballY >= SCREEN_HEIGHT - 1) {
+    ballDirY = -ballDirY;  // Reverse the Y direction if ball hits top or bottom
+  }
+
+  // Check for collisions with the left paddle (when ball is moving left)
+  if (ballDirX == -1 && ballX == 1) {
+    if (checkPaddleCollision(paddleLeft)) {
+      ballDirX = 1;  // Reverse direction and give random Y direction
+      ballDirY = random(-1, 2);
+    } else {
+      scorePoint(true);  // Right player scores a point
+    }
+  }
+
+  // Check for collisions with the right paddle (when ball is moving right)
+  if (ballDirX == 1 && ballX == SCREEN_WIDTH - 2) {
+    if (checkPaddleCollision(paddleRight)) {
+      ballDirX = -1;  // Reverse direction and give random Y direction
+      ballDirY = random(-1, 2);
+    } else {
+      scorePoint(false); // Left player scores a point
+    }
+  }
+}
+
+bool checkPaddleCollision(int paddleY) {
+  // Check if the ball's Y position is within the paddle's vertical range
+  return (ballY >= paddleY && ballY < (paddleY + PADDLE_HEIGHT));
+}
+
+void scorePoint(bool rightScored) {
+  // Update score and check for a winner
+  if (rightScored) {
+    scoreRight = scoreRight + 1;
+    if (scoreRight >= WINNING_SCORE) {
+      gameOver = true;  // End game if right player wins
+      return;
+    }
+  } else {
+    scoreLeft = scoreLeft + 1;
+    if (scoreLeft >= WINNING_SCORE) {
+      gameOver = true;  // End game if left player wins
+      return;
+    }
+  }
+
+  displayScores();  // Display the updated scores on the LED displays
+  delay(SCORE_DISPLAY_TIME);  // Show the scores for a brief period
+  resetBall();  // Reset the ball position after scoring
+}
+
+void resetBall() {
+  // Reset ball position to center and assign a random direction
+  ballX = SCREEN_WIDTH / 2;
+  ballY = SCREEN_HEIGHT / 2;
+  ballDirX = (random(2) == 1 ? 1 : -1);
+  ballDirY = (random(2) == 1 ? 1 : -1);
+}
+
+void drawGame() {
+  clearDisplays();  // Clear the displays before drawing the game
+  drawPaddles();    // Draw the paddles on the display
+  drawBall();       // Draw the ball on the display
+}
+
+void drawPaddles() {
+  // Draw the left and right paddles on the screen
+  for (int i = 0; i < PADDLE_HEIGHT; i = i + 1) {
+    setPixel(paddleLeft + i, 0, true);          // Left paddle
+    setPixel(paddleRight + i, SCREEN_WIDTH - 1, true); // Right paddle
+  }
+}
+
+void drawBall() {
+  // Draw the ball at its current position
+  setPixel(ballY, ballX, true);
+}
+
+void displayScores() {
+  // Clear the displays before showing the scores
+  clearDisplays();
+
+  // Display the left score on the top display
+  for (int col = 0; col < 5; col = col + 1) {
+    lc_top.setColumn(0, 2 + col, pgm_read_byte(&font[scoreLeft][col])); //wanted to free up the SRAM to potentially solve blinking
+  }
+
+  // Display separator between scores
+  lc_top.setColumn(2, 6, 0x10);
+  lc_top.setColumn(2, 7, 0x10);
+  lc_top.setColumn(1, 0, 0x10);
+  lc_top.setColumn(1, 1, 0x10);
+
+  // Display the right score on the top display
+  for (int col = 0; col < 5; col = col + 1) {
+    lc_top.setColumn(3, 2 + col, pgm_read_byte(&font[scoreRight][col]));
+  }
+}
+
+void clearDisplays() { //Clear the display
+  for (int moduleIndex = 0; moduleIndex < 4; moduleIndex = moduleIndex + 1) {
+    lc_top.clearDisplay(moduleIndex);
+    lc_bottom.clearDisplay(moduleIndex);
+  }
+}
